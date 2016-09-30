@@ -7,6 +7,7 @@ import random		# for creating the challenge string
 import string		# for creating the challenge string
 import hashlib		# for MD5 hash
 import csv			# for parsing the password file
+import datetime		# for time-stamping sensor data
 
 # Default host, port, filename, and debug mode
 host = ''
@@ -72,13 +73,13 @@ for opt, arg in opts:
 	elif opt in ("-d", "--debug"):
 		debug = True
 	elif opt in ("-p", "--port"):
-		port = int(arg)
-		if debug:
-			print 'Port: ' + arg
+		try:
+			port = int(arg)
+		except ValueError:
+			print 'Invalid port. Exiting.'
+			sys.exit()
 	elif opt in ("-f", "--file"):
 		filename = arg
-		if debug:
-			print 'Filename: ' + filename
 
 # ========================================================
 
@@ -142,8 +143,7 @@ except socket.error:
 	print 'Failed to create socket.'
 	sys.exit()
 
-if debug:
-	print 'Socket created.'
+if debug: print 'Socket created.'
 
 # ========================================================
 
@@ -155,8 +155,7 @@ except socket.error, msg:
 	print 'Bind failed. Error code: ' + str(msg[0]) + ' | Message: ' + msg[1]
 	sys.exit()
 
-if debug:
-	print 'Socked bind complete.'
+if debug: print 'Socked bind complete.'
 
 # ========================================================
 
@@ -168,8 +167,7 @@ except socket.error, msg:
 	print 'Socket listen failed.  Error code: ' + str(msg[0]) + ' | Message: ' + msg[1]
 	sys.exit()
 
-if debug:
-	print 'Socket listening on port ' + str(port)
+if debug: print 'Socket listening on port ' + str(port)
 
 # ========================================================
 
@@ -187,52 +185,39 @@ challenge_hash = ''
 
 # ========= Challenge Response Algorithm Methods =========
 
-if debug:
-	print 'Beginning Challenge Response Authentication'
-
-# receive_auth_request receives and verifies the auth request sent by
-#		the client to begin the CRA authentication
-# NOTE: Protocol here is for client to send "SHOW_ME_WHAT_YOU_GOT"
-def receive_auth_request():
-	auth_request = conn.recv(4096)
-
-	# Verify the authentication request
-	if auth_request != VALID_AUTH_REQUEST_FROM_CLIENT:
-		# Client improperly requested auth -- send invalid auth message
-		conn.sendall(INVALID_AUTH_TO_CLIENT)
-		print 'Authentication failed for client' # TODO - Add client details
-
-	if debug:
-		print 'Received Authentication Request: ' + auth_request
-
-# compute_and_send_challenge computes the 64-character random string and sends
-#		it to the client
-# NOTE: Protocol here is for server to send 'challenge=<64-character random string>'
-def compute_and_send_challenge():
-	challenge = 'challenge=' + ''.join(random.choice(string.ascii_uppercase + string.digits) for i in range(64))
-	if debug:
-		print 'Sending Challenge: ' + challenge
-	try:
-	    conn.sendall(challenge)
-	except socket.error:
-	    print 'Challenge failed to send.'
-	    sys.exit()
+if debug: print 'Beginning Challenge Response Authentication'
 
 # ========================================================
 
 while 1:
 
 	conn, addr = s.accept()
-	if debug:
-		print 'Connected with ' + addr[0] + ':' + str(addr[1])
+	if debug: print 'Connected with ' + addr[0] + ':' + str(addr[1])
 
 	# ============= Challenge Response Algorithm =============
 
 	# 1. Receive "Authentication Request" message.
-	receive_auth_request()
+	# NOTE: Protocol here is for client to send "SHOW_ME_WHAT_YOU_GOT"
+	auth_request = conn.recv(4096)
+
+	# Verify the authentication request
+	if auth_request != VALID_AUTH_REQUEST_FROM_CLIENT:
+		# Client improperly requested auth -- send invalid auth message
+		print 'User authentication failed for client: ' + str(addr) + ' username: ' + username
+		conn.sendall(INVALID_AUTH_TO_CLIENT)
+		continue
+
+	if debug: print 'Received Authentication Request: ' + auth_request
 
 	# 2. Compute and send challenge value (random 64-character string).
-	compute_and_send_challenge()
+	# NOTE: Protocol here is for server to send 'challenge=<64-character random string>'
+	challenge = ''.join(random.choice(string.ascii_uppercase + string.digits) for i in range(64))
+	if debug: print 'Sending Challenge: ' + challenge
+	try:
+	    conn.sendall('challenge=' + challenge)
+	except socket.error:
+	    print 'Challenge failed to send.'
+	    sys.exit()
 
 	# 3. Receive username and hash from client.
 	# NOTE: Protocol here is for client to send 'username=<username>&hash=<hash>'
@@ -241,40 +226,43 @@ while 1:
 	# Split the message into arguments
 	arguments = md5_hash.split('&')
 
-	# TODO - Verify order of arguments
+	# Validate number of arguments
+ 	if len(arguments) != 2:
+ 		# Client sent invalid MD5 hash
+ 		print 'User authentication failed for client: ' + str(addr) + ' username: ' + username
+ 		conn.sendall(INVALID_AUTH_TO_CLIENT)
+		continue
 
-	# Validate and trim arguments
+ 	# Validate order of arguments
+ 	if 'username' not in arguments[0] or 'hash' not in arguments[1]:
+ 		# Client sent wrong order of arguments
+ 		print 'User authentication failed for client: ' + str(addr) + ' username: ' + username
+ 		conn.sendall(INVALID_AUTH_TO_CLIENT)
+		continue
+
+	# Trim arguments
 	trimmed_arguments = []
 	expected_arguments = ['username', 'hash']
 	for i in range(len(arguments)):
 		trimmed_arguments.append(trim_argument(arguments[i], expected_arguments[i]))
 
-	if debug:
-		print 'trimmed_arguments: ' + str(trimmed_arguments)
-		print 'len(arguments) = ' + str(len(arguments))
-
 	if len(trimmed_arguments) == 2:
 		username = trimmed_arguments[0]
 		challenge_hash = trimmed_arguments[1]
-		if debug:
-			print 'Received MD5 Hash: ' + md5_hash
-			print 'username: ' + username
-			print 'hash: ' + challenge_hash
+		if debug: print 'Received MD5 Hash: ' + md5_hash
 	else:
 		# Client sent invalid hash -- send invalid auth message
+		print 'User authentication failed for client: ' + str(addr) + ' username: ' + username
 		conn.sendall(INVALID_AUTH_TO_CLIENT)
 		continue
 
 	# 4. Find password corresponding to username and perform same MD5 hash.
 
-	if debug:
-		print 'Finding password for username ' + username
 	password = find_password(username)
-	if debug:
-		print 'Password for ' + username + ' is ' + password + '.'
+	if debug: print 'Password for ' + username + ' is ' + password + '.'
 	if password == "INVALID_CREDENTIALS":
-		print 'Invalid credentials'
 		# Client improperly requested auth -- send invalid auth message
+		print 'User authentication failed for client: ' + str(addr) + ' username: ' + username
 		conn.sendall(INVALID_AUTH_TO_CLIENT)
 		continue
  	else:
@@ -286,18 +274,16 @@ while 1:
 
 		# 5. Compare the two hashes. Send the appropriate message to client.
 
-		if debug:
-			print 'Comparing hashes -- ' + challenge_hash + ' vs ' + correct_hash
+		if debug: print 'Comparing hashes -- ' + challenge_hash + ' vs ' + correct_hash
 		if challenge_hash == correct_hash:
 			# Client properly requested auth -- send success message
 			conn.sendall(AUTH_SUCCESSFUL_MESSAGE)
-			if debug:
-				print 'Correct hash.'
+			if debug: print 'Correct hash.'
 		else:
 			# Client improperly requested auth -- send failure message
+			print 'User authentication failed for client: ' + str(addr) + ' username: ' + username
 			conn.sendall(INVALID_AUTH_TO_CLIENT)
-			if debug:
-				print 'Incorrect hash.'
+			if debug: print 'Incorrect hash.'
 			continue
 
 	# ========================================================
@@ -307,8 +293,7 @@ while 1:
 	# NOTE: Protocol here is for client to send 'recording=<recording>'
 	sensor_data = conn.recv(4096)
 	sensor_recording = trim_argument(sensor_data, 'recording')
-	if debug:
-		print 'sensor_recording: ' + sensor_recording
+	if debug: print 'sensor_recording: ' + sensor_recording
 
 	# ========================================================
 
@@ -322,7 +307,9 @@ while 1:
 	#		time=<time>&sensor_min=<sensor_min>&sensor_avg=<sensor_avg>&sensor_max=<sensor_max>
 	#		&all_avg=<all_avg>'
 
-	sensor_response = 'sensor=' + username + '&recorded=' + str(sensor_recording) + '&time=' + str(1.2345667789) + '&sensor_min=' + str(sensor_statistics['min']) + '&sensor_avg=' + str(sensor_statistics['avg']) + '&sensor_max=' + str(sensor_statistics['max']) + '&all_avg=' + str(sensor_statistics['all_avg'])
+	time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+
+	sensor_response = 'sensor=' + username + '&recorded=' + str(sensor_recording) + '&time=' + time + '&sensor_min=' + str(sensor_statistics['min']) + '&sensor_avg=' + str(sensor_statistics['avg']) + '&sensor_max=' + str(sensor_statistics['max']) + '&all_avg=' + str(sensor_statistics['all_avg'])
 
 	conn.sendall(sensor_response)
 
