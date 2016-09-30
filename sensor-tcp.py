@@ -10,7 +10,8 @@ server = '172.17.0.2'
 port = 1235
 username = 'username1'
 password = 'password1'
-recording = 42.0
+recording = 50.0
+debug = False
 
 # ==================== Helper Methods =====================
 
@@ -29,12 +30,29 @@ def trim_argument(untrimmed, name):
 	# Return argument after '='
     return untrimmed[pos_equals + 1:len(untrimmed)]
 
+def format_sensor_statistics(sensor_statistics):
+    arguments = sensor_statistics.split('&')
+    trimmed_arguments = []
+    expected_arguments = ['sensor', 'recorded', 'time', 'sensor_min', 'sensor_avg', 'sensor_max', 'all_avg']
+    for i in range(len(arguments)):
+        trimmed_arguments.append(trim_argument(arguments[i], expected_arguments[i]))
+
+    output = 'Sensor: ' + trimmed_arguments[0]
+    output += ' recorded: ' + trimmed_arguments[1]
+    output += ' time: ' + trimmed_arguments[2]
+    output += ' sensorMin: ' + trimmed_arguments[3]
+    output += ' sensorAvg: ' + trimmed_arguments[4]
+    output += ' sensorMax: ' + trimmed_arguments[5]
+    output += ' allAvg: ' + trimmed_arguments[6]
+
+    return output
+
 # ========================================================
 
 # ============= Parse Command-Line Arguments ==============
 
 try:
-    opts, args = getopt.getopt(sys.argv[1:],"hs:p:u:c:r:",["server=", "port=", "username=", "password=", "recording="])
+    opts, args = getopt.getopt(sys.argv[1:],"hds:p:u:c:r:",["server=", "port=", "username=", "password=", "recording=", "debug="])
 except getopt.GetoptError:
     print 'Please specify a server (-s), port (-p), username (-u), password (-c), and sensor recording (-r). Use -d for debug printing.'
     sys.exit()
@@ -42,6 +60,8 @@ for opt, arg in opts:
     if opt == '-h':
         print 'Usage: ' + sys.argv[0] + ' -s <server> -p <port> -u <username> -c <password> -r <sensor recording>'
         sys.exit()
+    elif opt in ("-d", "--debug"):
+        debug = True
     elif opt in ("-s", "--server"):
         server = arg
         # print 'Server: ' + server
@@ -68,7 +88,8 @@ except socket.error:
     print 'Failed to create socket.'
     sys.exit()
 
-print 'Socket created.'
+if debug:
+    print 'Socket created.'
 
 # ========================================================
 
@@ -80,7 +101,8 @@ except socket.error, msg:
     print 'Failed to connect to ' + server + ':' + str(port) + '. (Error code: ' + str(msg[0]) + ' | Message: ' + msg[1] + ')'
     sys.exit()
 
-print 'Socket connected to ' + server + ':' + str(port)
+if debug:
+    print 'Socket connected to ' + server + ':' + str(port)
 
 # ========================================================
 
@@ -96,9 +118,16 @@ challenge = ''
 
 # ============= Challenge Response Algorithm =============
 
+if debug:
+    print 'Beginning Challenge Response Authentication'
+
 # send_auth_request sends the auth request for the CRA to the server
 # NOTE: Protocol here is for client to send "SHOW_ME_WHAT_YOU_GOT"
 def send_auth_request():
+
+    if debug:
+        print 'Sending authentication request.'
+
     try:
         s.sendall(AUTH_REQUEST_FOR_SERVER)
     except socket.error:
@@ -120,7 +149,7 @@ def receive_challenge():
     if len(challenge) != 64:
         print 'Invalid challenge received. Exiting.'
         sys.exit()
-    else:
+    elif debug:
         print 'Challenge received: ' + challenge
 
 # compute_and_send_challenge_response computes the MD5 hash with hashlib's built-in
@@ -134,7 +163,9 @@ def compute_and_send_challenge_response():
     md5_hash = md5.hexdigest()
 
     challenge_response = 'username=' + username + '&hash=' + md5_hash
-    print 'Challenge response: ' + challenge_response
+
+    if debug:
+        print 'Challenge response: ' + challenge_response
 
     try:
         s.sendall(challenge_response)
@@ -149,6 +180,8 @@ def receive_auth_results():
     if auth_results == INVALID_AUTH_RESPONSE_FROM_SERVER:
         print 'User authentication failed!'
         sys.exit()
+    elif debug:
+        print 'User authentication succeeded!'
 
 # 1. Send authentication request.
 send_auth_request()
@@ -166,7 +199,8 @@ receive_auth_results()
 
 # =============== Sending the Sensor Data ================
 
-print 'sending the sensor data'
+if debug:
+    print 'Sending sensor data.'
 
 # NOTE: Protocol here is for client to send 'recording=<recording>'
 sensor_data = 'recording=' + str(recording)
@@ -176,8 +210,14 @@ except socket.error:
     print 'Sensor data failed to send.'
     sys.exit()
 
+# NOTE: Protocol here is for server to send 'sensor=<username>&recorded=<recording>&
+#		time=<time>&sensor_min=<sensor_min>&sensor_avg=<sensor_avg>&sensor_max=<sensor_max>
+#		&all_avg=<all_avg>'
+
 sensor_statistics = s.recv(4096)
 
-print 'Received sensor_statistics: ' + sensor_statistics
+# TODO - Check for invalid sensor statistics.
+
+print format_sensor_statistics(sensor_statistics)
 
 # ========================================================

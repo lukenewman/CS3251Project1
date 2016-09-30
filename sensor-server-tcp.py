@@ -22,8 +22,6 @@ def find_password(username):
 	if debug:
 		print "Finding password for username '" + username + "'"
 	for credential in credentials:
-		if debug:
-			print str(credential)
 		if credential[0] == username:
 			return credential[1]
 	return "INVALID_CREDENTIALS"
@@ -42,6 +40,23 @@ def trim_argument(untrimmed, name):
 
 	# Return argument after '='
     return untrimmed[pos_equals + 1:len(untrimmed)]
+
+def format_sensor_statistics(sensor_statistics):
+    arguments = sensor_statistics.split('&')
+    trimmed_arguments = []
+    expected_arguments = ['sensor', 'recorded', 'time', 'sensor_min', 'sensor_avg', 'sensor_max', 'all_avg']
+    for i in range(len(arguments)):
+        trimmed_arguments.append(trim_argument(arguments[i], expected_arguments[i]))
+
+    output = 'Sensor: ' + trimmed_arguments[0]
+    output += ' recorded: ' + trimmed_arguments[1]
+    output += ' time: ' + trimmed_arguments[2]
+    output += ' sensorMin: ' + trimmed_arguments[3]
+    output += ' sensorAvg: ' + trimmed_arguments[4]
+    output += ' sensorMax: ' + trimmed_arguments[5]
+    output += ' allAvg: ' + trimmed_arguments[6]
+
+    return output
 
 # ============= Parse Command-Line Arguments ==============
 
@@ -78,6 +93,44 @@ for opt, arg in opts:
 password_file = open(filename)
 reader = csv.reader(password_file)
 credentials = list(reader)
+
+# ========================================================
+
+# =================== Sensor Database ====================
+
+# Sensor information is stored in the following format:
+#		{ 'username1': [ x, y, z... ],
+#		  'username2': [ x, y, z... ],
+#		  'username3': [ x, y, z... ],
+#		  ...}
+
+sensor_database = {}
+for sensor in credentials:
+	stats = []
+	sensor_database[sensor[0]] = stats
+
+# amend_statistics takes a sensor name and a new value and returns the new
+#		statistics (min, avg, max) of the sensor in the format: { 'min': x,
+#		'avg': y, 'max': z, 'all_avg': w } (note that this also includes the
+#		average of every sensor's recordings)
+def amend_statistics(sensor_name, new_value):
+	sensor = sensor_database[sensor_name]
+	sensor.append(float(new_value))
+	min_stat = min(sensor)
+	avg_stat = reduce(lambda x, y: x + y, sensor) / len(sensor)
+	max_stat = max(sensor)
+	return { 'min': min_stat, 'avg': avg_stat, 'max': max_stat,
+			 'all_avg': get_all_average() }
+
+def get_all_average():
+	count = 0
+	total = 0
+	for sensor in credentials:
+		sensor_name = sensor[0]
+		sensor_values = sensor_database[sensor_name]
+		count += sum(sensor_values)
+		total += len(sensor_values)
+	return count / total
 
 # ========================================================
 
@@ -124,13 +177,18 @@ if debug:
 
 INVALID_AUTH_TO_CLIENT = 'HMMM... DISQUALIFIED'
 VALID_AUTH_REQUEST_FROM_CLIENT = 'SHOW ME WHAT YOU GOT'
+AUTH_SUCCESSFUL_MESSAGE = 'I LIKE WHAT YOU GOT. GOOD JOB.'
+
 challenge = ''
-username = 'asdf'
+username = ''
 challenge_hash = ''
 
 # ========================================================
 
 # ========= Challenge Response Algorithm Methods =========
+
+if debug:
+	print 'Beginning Challenge Response Authentication'
 
 # receive_auth_request receives and verifies the auth request sent by
 #		the client to begin the CRA authentication
@@ -199,13 +257,13 @@ while 1:
 		username = trimmed_arguments[0]
 		challenge_hash = trimmed_arguments[1]
 		if debug:
-			print 'Received Valid MD5 Hash: ' + md5_hash
+			print 'Received MD5 Hash: ' + md5_hash
 			print 'username: ' + username
 			print 'hash: ' + challenge_hash
-
 	else:
 		# Client sent invalid hash -- send invalid auth message
 		conn.sendall(INVALID_AUTH_TO_CLIENT)
+		continue
 
 	# 4. Find password corresponding to username and perform same MD5 hash.
 
@@ -213,12 +271,12 @@ while 1:
 		print 'Finding password for username ' + username
 	password = find_password(username)
 	if debug:
-		print 'Password: ' + password
+		print 'Password for ' + username + ' is ' + password + '.'
 	if password == "INVALID_CREDENTIALS":
 		print 'Invalid credentials'
-		# TODO - Send invalid notice to client -- how to restart CRA?
 		# Client improperly requested auth -- send invalid auth message
 		conn.sendall(INVALID_AUTH_TO_CLIENT)
+		continue
  	else:
 		md5 = hashlib.md5()
 		md5.update(username)
@@ -231,15 +289,16 @@ while 1:
 		if debug:
 			print 'Comparing hashes -- ' + challenge_hash + ' vs ' + correct_hash
 		if challenge_hash == correct_hash:
-			# TODO - Process sensor recording and send the OK to the client
-			conn.sendall('yay you did it')
+			# Client properly requested auth -- send success message
+			conn.sendall(AUTH_SUCCESSFUL_MESSAGE)
 			if debug:
 				print 'Correct hash.'
 		else:
-			# Client improperly requested auth -- send invalid auth message
+			# Client improperly requested auth -- send failure message
 			conn.sendall(INVALID_AUTH_TO_CLIENT)
 			if debug:
 				print 'Incorrect hash.'
+			continue
 
 	# ========================================================
 
@@ -248,8 +307,25 @@ while 1:
 	# NOTE: Protocol here is for client to send 'recording=<recording>'
 	sensor_data = conn.recv(4096)
 	sensor_recording = trim_argument(sensor_data, 'recording')
-	print 'sensor_recording: ' + sensor_recording
+	if debug:
+		print 'sensor_recording: ' + sensor_recording
 
-	conn.sendall('yo i got your sensor stuff')
+	# ========================================================
+
+	# ====== Processing & Returning Sensor Statistics ========
+
+	# Incorporate sensor recording into "database."
+	sensor_statistics = amend_statistics(username, sensor_recording)
+
+	# Send statistics to client.
+	# NOTE: Protocol here is for server to send 'sensor=<username>&recorded=<recording>&
+	#		time=<time>&sensor_min=<sensor_min>&sensor_avg=<sensor_avg>&sensor_max=<sensor_max>
+	#		&all_avg=<all_avg>'
+
+	sensor_response = 'sensor=' + username + '&recorded=' + str(sensor_recording) + '&time=' + str(1.2345667789) + '&sensor_min=' + str(sensor_statistics['min']) + '&sensor_avg=' + str(sensor_statistics['avg']) + '&sensor_max=' + str(sensor_statistics['max']) + '&all_avg=' + str(sensor_statistics['all_avg'])
+
+	conn.sendall(sensor_response)
+
+	print format_sensor_statistics(sensor_response)
 
 	# ========================================================
