@@ -30,7 +30,15 @@ def trim_argument(untrimmed, name):
 	# Return argument after '='
     return untrimmed[pos_equals + 1:len(untrimmed)]
 
+# format_sensor_statistics takes in the sensor statistics received by the server,
+#       extracts and trims the arguments and returns them in a formatted way
+# NOTE: Protocol here is for server to send 'sensor=<username>&recorded=<recording>&
+#		time=<time>&sensor_min=<sensor_min>&sensor_avg=<sensor_avg>&sensor_max=<sensor_max>
+#		&all_avg=<all_avg>'
 def format_sensor_statistics(sensor_statistics):
+
+    # TODO - Check for invalid sensor statistics.
+
     arguments = sensor_statistics.split('&')
     trimmed_arguments = []
     expected_arguments = ['sensor', 'recorded', 'time', 'sensor_min', 'sensor_avg', 'sensor_max', 'all_avg']
@@ -63,20 +71,28 @@ for opt, arg in opts:
     elif opt in ("-d", "--debug"):
         debug = True
     elif opt in ("-s", "--server"):
+        try:
+            socket.inet_aton(arg)
+        except socket.error:
+            print 'Invalid server address. Exiting.'
+            sys.exit()
         server = arg
-        # print 'Server: ' + server
     elif opt in ("-p", "--port"):
-        port = int(arg)
-        # print 'Port: ' + arg
+        try:
+            port = int(arg)
+        except ValueError:
+            print 'Invalid port. Exiting.'
+            sys.exit()
     elif opt in ("-u", "--username"):
         username = arg
-        # print 'Username: ' + username
     elif opt in ("-c", "--password"):
         password = arg
-        # print 'Password: ' + password
     elif opt in ("-r", "--recording"):
-        recording = float(arg)
-        # print 'Recording: ' + arg
+        try:
+            recording = float(arg)
+        except ValueError:
+            print 'Invalid recording. Exiting.'
+            sys.exit()
 
 # ========================================================
 
@@ -108,8 +124,8 @@ if debug:
 
 # =========== Protocol Constants and Variables ===========
 
-INVALID_AUTH_RESPONSE_FROM_SERVER = 'HMMM... DISQUALIFIED'
 AUTH_REQUEST_FOR_SERVER = 'SHOW ME WHAT YOU GOT'
+INVALID_AUTH_RESPONSE_FROM_SERVER = 'HMMM... DISQUALIFIED'
 
 challenge_message = ''
 challenge = ''
@@ -118,106 +134,107 @@ challenge = ''
 
 # ============= Challenge Response Algorithm =============
 
-if debug:
-    print 'Beginning Challenge Response Authentication'
+for i in range(3):
 
-# send_auth_request sends the auth request for the CRA to the server
-# NOTE: Protocol here is for client to send "SHOW_ME_WHAT_YOU_GOT"
-def send_auth_request():
+    print '---------- Attempt ' + str(i + 1) + ' ----------'
 
     if debug:
-        print 'Sending authentication request.'
+        print 'Beginning Challenge Response Authentication'
 
-    try:
-        s.sendall(AUTH_REQUEST_FOR_SERVER)
-    except socket.error:
-        print 'Authentication Request failed to send.'
-        sys.exit()
+    # send_auth_request sends the auth request for the CRA to the server
+    # NOTE: Protocol here is for client to send "SHOW_ME_WHAT_YOU_GOT"
+    def send_auth_request():
 
-# receive_challenge receives the challenge string from the server
-# NOTE: Protocol here is for server to send 'challenge=<64-character random string>'
-def receive_challenge():
-    challenge_message = s.recv(4096)
+        if debug:
+            print 'Sending authentication request.'
 
-    # Check for invalid authentication message and exit if necessary.
-    if challenge_message == INVALID_AUTH_RESPONSE_FROM_SERVER:
-        print 'User authentication failed!'
-        sys.exit()
+        try:
+            s.sendall(AUTH_REQUEST_FOR_SERVER)
+        except socket.error:
+            print 'Authentication Request failed to send.'
+            sys.exit()
 
-    # Extract the challenge string from the message
-    challenge = trim_argument(challenge_message, 'challenge')
-    if len(challenge) != 64:
-        print 'Invalid challenge received. Exiting.'
-        sys.exit()
-    elif debug:
-        print 'Challenge received: ' + challenge
+    # receive_challenge receives the challenge string from the server
+    # NOTE: Protocol here is for server to send 'challenge=<64-character random string>'
+    def receive_challenge():
+        challenge_message = s.recv(4096)
 
-# compute_and_send_challenge_response computes the MD5 hash with hashlib's built-in
-#       functionality, composes the challenge response, and sends it
-# NOTE: Protocol here is for client to send 'username=<username>&hash=<hash>'
-def compute_and_send_challenge_response():
-    md5 = hashlib.md5()
-    md5.update(username)
-    md5.update(password)
-    md5.update(challenge)
-    md5_hash = md5.hexdigest()
+        # Check for invalid authentication message and exit if necessary.
+        if challenge_message == INVALID_AUTH_RESPONSE_FROM_SERVER:
+            print 'User authentication failed!'
+            sys.exit()
 
-    challenge_response = 'username=' + username + '&hash=' + md5_hash
+        # Extract the challenge string from the message
+        challenge = trim_argument(challenge_message, 'challenge')
+        if len(challenge) != 64:
+            print 'Invalid challenge received. Exiting.'
+            sys.exit()
+        elif debug:
+            print 'Challenge received: ' + challenge
+
+    # compute_and_send_challenge_response computes the MD5 hash with hashlib's built-in
+    #       functionality, composes the challenge response, and sends it
+    # NOTE: Protocol here is for client to send 'username=<username>&hash=<hash>'
+    def compute_and_send_challenge_response():
+        md5 = hashlib.md5()
+        md5.update(username)
+        md5.update(password)
+        md5.update(challenge)
+        md5_hash = md5.hexdigest()
+
+        challenge_response = 'username=' + username + '&hash=' + md5_hash
+
+        if debug:
+            print 'Challenge response: ' + challenge_response
+
+        try:
+            s.sendall(challenge_response)
+        except socket.error:
+            print 'Challenge Response failed to send.'
+            sys.exit()
+
+    def receive_auth_results():
+        auth_results = s.recv(4096)
+
+        # Alert user of auth results.
+        if auth_results == INVALID_AUTH_RESPONSE_FROM_SERVER:
+            print 'User authentication failed!'
+            sys.exit()
+        elif debug:
+            print 'User authentication succeeded!'
+
+    # 1. Send authentication request.
+    send_auth_request()
+
+    # 2. Receive challenge.
+    receive_challenge()
+
+    # 3. Compute and send challenge response.
+    compute_and_send_challenge_response()
+
+    # 4. Receive authentication results.
+    receive_auth_results()
+
+    # ========================================================
+
+    # =============== Sending the Sensor Data ================
 
     if debug:
-        print 'Challenge response: ' + challenge_response
+        print 'Sending sensor data.'
 
+    # NOTE: Protocol here is for client to send 'recording=<recording>'
+    sensor_data = 'recording=' + str(recording)
     try:
-        s.sendall(challenge_response)
+        s.sendall(sensor_data)
     except socket.error:
-        print 'Challenge Response failed to send.'
+        print 'Sensor data failed to send.'
         sys.exit()
 
-def receive_auth_results():
-    auth_results = s.recv(4096)
+    sensor_statistics = s.recv(4096)
 
-    # Alert user of auth results.
-    if auth_results == INVALID_AUTH_RESPONSE_FROM_SERVER:
-        print 'User authentication failed!'
-        sys.exit()
-    elif debug:
-        print 'User authentication succeeded!'
+    print format_sensor_statistics(sensor_statistics)
 
-# 1. Send authentication request.
-send_auth_request()
+    # ========================================================
 
-# 2. Receive challenge.
-receive_challenge()
-
-# 3. Compute and send challenge response.
-compute_and_send_challenge_response()
-
-# 4. Receive authentication results.
-receive_auth_results()
-
-# ========================================================
-
-# =============== Sending the Sensor Data ================
-
-if debug:
-    print 'Sending sensor data.'
-
-# NOTE: Protocol here is for client to send 'recording=<recording>'
-sensor_data = 'recording=' + str(recording)
-try:
-    s.sendall(sensor_data)
-except socket.error:
-    print 'Sensor data failed to send.'
-    sys.exit()
-
-# NOTE: Protocol here is for server to send 'sensor=<username>&recorded=<recording>&
-#		time=<time>&sensor_min=<sensor_min>&sensor_avg=<sensor_avg>&sensor_max=<sensor_max>
-#		&all_avg=<all_avg>'
-
-sensor_statistics = s.recv(4096)
-
-# TODO - Check for invalid sensor statistics.
-
-print format_sensor_statistics(sensor_statistics)
-
-# ========================================================
+    s.close()
+    break
