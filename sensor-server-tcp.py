@@ -123,6 +123,7 @@ def amend_statistics(sensor_name, new_value):
 	return { 'min': min_stat, 'avg': avg_stat, 'max': max_stat,
 			 'all_avg': get_all_average() }
 
+# get_all_average returns the average of all sensor values recorded in the database
 def get_all_average():
 	count = 0
 	total = 0
@@ -183,18 +184,14 @@ challenge_hash = ''
 
 # ========================================================
 
-# ========= Challenge Response Algorithm Methods =========
-
-if debug: print 'Beginning Challenge Response Authentication'
-
-# ========================================================
-
 while 1:
 
 	conn, addr = s.accept()
 	if debug: print 'Connected with ' + addr[0] + ':' + str(addr[1])
 
 	# ============= Challenge Response Algorithm =============
+
+	if debug: print 'Beginning Challenge Response Authentication'
 
 	# 1. Receive "Authentication Request" message.
 	# NOTE: Protocol here is for client to send "SHOW_ME_WHAT_YOU_GOT"
@@ -246,6 +243,7 @@ while 1:
 	for i in range(len(arguments)):
 		trimmed_arguments.append(trim_argument(arguments[i], expected_arguments[i]))
 
+	# Validate
 	if len(trimmed_arguments) == 2:
 		username = trimmed_arguments[0]
 		challenge_hash = trimmed_arguments[1]

@@ -121,6 +121,8 @@ if debug: print 'Socket connected to ' + server + ':' + str(port)
 
 INVALID_AUTH_RESPONSE_FROM_SERVER = 'HMMM... DISQUALIFIED'
 AUTH_REQUEST_FOR_SERVER = 'SHOW ME WHAT YOU GOT'
+AUTH_SUCCESSFUL_MESSAGE = 'I LIKE WHAT YOU GOT. GOOD JOB.'
+
 FAILURE_MESSAGE = 'User authentication failed!'
 
 challenge_message = ''
@@ -158,6 +160,8 @@ if 'challenge' not in challenge_message:
 
 # Extract the challenge string from the message.
 challenge = trim_argument(challenge_message, 'challenge')
+
+# Check for invalid challenge.
 if len(challenge) != 64:
     print 'Invalid challenge received. Exiting.'
     sys.exit()
@@ -189,8 +193,8 @@ auth_results = s.recv(4096)
 if auth_results == INVALID_AUTH_RESPONSE_FROM_SERVER:
     print FAILURE_MESSAGE
     sys.exit()
-
-if debug: print 'User authentication succeeded!'
+elif auth_results == AUTH_SUCCESSFUL_MESSAGE:
+    if debug: print 'User authentication succeeded!'
 
 # ========================================================
 
@@ -218,4 +222,3 @@ print format_sensor_statistics(sensor_statistics)
 # ========================================================
 
 s.close()
-sys.exit()
